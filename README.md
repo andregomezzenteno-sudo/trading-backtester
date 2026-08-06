@@ -8,8 +8,8 @@ step — open `index.html` and it runs.
 
 ## What it does
 
-1. Pick an asset (BTC, ETH, SOL, XRP, ADA, LTC) and a historical range (up to the
-   365 days the free CoinGecko API allows).
+1. Pick an asset — the top ~150 cryptocurrencies by market cap, loaded live from
+   CoinGecko — and a historical range (up to the 365 days the free API allows).
 2. Set the short and long SMA periods for a classic **moving-average crossover**
    strategy: go long when the short SMA crosses above the long SMA, exit when it
    crosses back below.

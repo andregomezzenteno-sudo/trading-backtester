@@ -317,6 +317,35 @@ function renderChart({ svg, tooltipEl, dates, series, markers, yFormat, tooltipF
   hitRect.addEventListener('pointerleave', handleLeave);
 }
 
+/* ---------- Asset list ---------- */
+
+// index.html ships a small static <option> list as an instant, no-JS fallback.
+// On load we replace it with the top ~150 assets by market cap, so the page
+// never shows an empty dropdown even if this fetch is slow or rate-limited.
+async function loadAssetOptions() {
+  try {
+    const res = await fetch('https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=150&page=1&sparkline=false');
+    if (!res.ok) return;
+    const coins = await res.json();
+    if (!Array.isArray(coins) || !coins.length) return;
+
+    const previousValue = assetSelect.value;
+    assetSelect.textContent = '';
+    coins.forEach(c => {
+      const opt = document.createElement('option');
+      opt.value = c.id;
+      opt.dataset.symbol = (c.symbol || '').toUpperCase();
+      opt.textContent = `${c.name} (${(c.symbol || '').toUpperCase()})`;
+      assetSelect.appendChild(opt);
+    });
+
+    if (coins.some(c => c.id === previousValue)) assetSelect.value = previousValue;
+    else if (coins.some(c => c.id === 'bitcoin')) assetSelect.value = 'bitcoin';
+  } catch (err) {
+    console.error('No se pudo cargar la lista completa de activos, usando la lista reducida.', err);
+  }
+}
+
 /* ---------- Page wiring ---------- */
 
 const assetSelect = document.getElementById('asset');
@@ -464,4 +493,4 @@ function debounce(fn, ms) {
 runBtn.addEventListener('click', runBacktestFlow);
 window.addEventListener('resize', debounce(() => { if (lastResult) renderAll(lastResult); }, 200));
 
-runBacktestFlow();
+loadAssetOptions().finally(runBacktestFlow);
