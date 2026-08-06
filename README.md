@@ -4,7 +4,7 @@ A small, real, publicly-runnable backtester for a moving-average-crossover tradi
 strategy, built on real historical market data. No backend, no API keys, no build
 step — open `index.html` and it runs.
 
-**[Live demo →](#)** _(update once deployed — see Deployment below)_
+**[Live demo →](https://andregomezzenteno-sudo.github.io/trading-backtester/)**
 
 ## What it does
 
@@ -59,17 +59,11 @@ python -m http.server 8000
 
 Then open the printed local URL.
 
-## Deployment (GitHub Pages)
+## Deployment
 
-```bash
-git add -A
-git commit -m "Initial commit"
-git branch -M main
-git remote add origin <your-repo-url>
-git push -u origin main
-```
-
-Then in the repo settings, enable **Pages → Deploy from branch → main → / (root)**.
+Deployed via GitHub Pages, serving directly from `main` — any push to `main`
+updates the live demo. To fork and deploy your own copy: push to your fork, then
+enable **Settings → Pages → Deploy from branch → main → / (root)**.
 
 ## Possible extensions
 
