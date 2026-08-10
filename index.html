@@ -91,6 +91,59 @@
     </div>
   </section>
 
+  <section class="sim-card" aria-label="Simulador de operación manual">
+    <h2>Simulador: ¿qué hubiera pasado si...?</h2>
+    <p class="sim-help">Haz click en el gráfico de precio de arriba para marcar tu <strong>entrada</strong>, y click de nuevo para marcar tu <strong>salida</strong>. Ajusta dirección, apalancamiento y tamaño cuando quieras — se recalcula solo.</p>
+    <div class="sim-controls">
+      <div class="control">
+        <label for="simDirection">Dirección</label>
+        <select id="simDirection">
+          <option value="long">Long (al alza)</option>
+          <option value="short">Short (a la baja)</option>
+        </select>
+      </div>
+      <div class="control control-narrow">
+        <label for="simLeverage">Apalancamiento</label>
+        <input type="number" id="simLeverage" value="1" min="1" max="125" step="1">
+      </div>
+      <div class="control control-narrow">
+        <label for="simSize">Tamaño (USD)</label>
+        <input type="number" id="simSize" value="1000" min="1" step="100">
+      </div>
+      <div class="control control-action">
+        <label class="control-spacer" aria-hidden="true"></label>
+        <button id="simCloseNowBtn" type="button">Cerrar al final del rango</button>
+      </div>
+      <div class="control control-action">
+        <label class="control-spacer" aria-hidden="true"></label>
+        <button id="simClearBtn" type="button" class="btn-secondary">Limpiar selección</button>
+      </div>
+    </div>
+    <p class="status" id="simStatus" role="status" aria-live="polite">Click en el gráfico de precio para elegir tu entrada.</p>
+    <div class="stat-grid" id="simStatGrid" hidden>
+      <div class="stat-tile" data-stat="simPnlUsd">
+        <span class="stat-label">P&amp;L</span>
+        <span class="stat-value">—</span>
+      </div>
+      <div class="stat-tile" data-stat="simPnlPct">
+        <span class="stat-label">P&amp;L %  (sobre margen)</span>
+        <span class="stat-value">—</span>
+      </div>
+      <div class="stat-tile" data-stat="simMargin">
+        <span class="stat-label">Margen usado</span>
+        <span class="stat-value">—</span>
+      </div>
+      <div class="stat-tile" data-stat="simLiquidation">
+        <span class="stat-label">Precio de liquidación</span>
+        <span class="stat-value">—</span>
+      </div>
+      <div class="stat-tile" data-stat="simDays">
+        <span class="stat-label">Días en la operación</span>
+        <span class="stat-value">—</span>
+      </div>
+    </div>
+  </section>
+
   <section class="chart-card" aria-label="Curva de capital">
     <div class="chart-card-head">
       <h2>Curva de capital: estrategia vs. buy &amp; hold</h2>

@@ -18,6 +18,11 @@ step — open `index.html` and it runs.
    - Equity curve: the strategy vs. simply buying and holding the asset
    - Metrics: total return, max drawdown, annualized Sharpe ratio, win rate, trade count
    - A full trade-by-trade log
+4. **Manual "what-if" simulator:** click two points on the price chart to mark your
+   own entry and exit, pick long or short, and optionally add leverage. It computes
+   P&L on margin the way a real leveraged position would — including **liquidation**:
+   if price moves against you by `1/leverage` before your exit, the position is
+   force-closed there instead of quietly riding out an impossible drawdown.
 
 ## Methodology notes (the part that actually matters)
 
@@ -32,6 +37,10 @@ step — open `index.html` and it runs.
 - **This is a research/education tool, not investment advice** and doesn't execute
   real trades. Most simple crossover strategies underperform buy-and-hold most of
   the time — that's an expected, honest result, not a bug.
+- **Leverage liquidation is isolated-margin, simplified.** `liquidationPrice =
+  entryPrice * (1 ± 1/leverage)`, ignoring maintenance-margin buffers and fees —
+  close enough to be honest about the risk without modeling a specific exchange's
+  exact margin rules. See `simulateManualTrade()` in [app.js](app.js).
 
 ## Architecture
 

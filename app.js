@@ -111,6 +111,44 @@ function backtest(dates, closes, shortP, longP) {
   return { smaShort, smaLong, trades, strategyEquity, buyHoldEquity, dailyReturns };
 }
 
+// Manual "what-if" trade: long or short, optionally leveraged, on the same
+// historical closes already loaded for the backtest. Leverage is modeled with
+// isolated-margin liquidation — a leveraged position that gets wiped out stops
+// there rather than silently riding out an impossible drawdown, since a
+// simulator that ignores liquidation would just be lying by omission.
+function simulateManualTrade({ dates, closes, entryIndex, exitIndex, direction, leverage, sizeUsd }) {
+  const entryPrice = closes[entryIndex];
+  const liqFraction = 1 / leverage;
+  const liquidationPrice = direction === 'long'
+    ? entryPrice * (1 - liqFraction)
+    : entryPrice * (1 + liqFraction);
+
+  const scanEnd = exitIndex != null ? exitIndex : closes.length - 1;
+  let liquidated = false;
+  let stopIndex = scanEnd;
+  for (let i = entryIndex; i <= scanEnd; i++) {
+    const price = closes[i];
+    const hit = direction === 'long' ? price <= liquidationPrice : price >= liquidationPrice;
+    if (hit) { liquidated = true; stopIndex = i; break; }
+  }
+
+  const exitPrice = liquidated ? liquidationPrice : closes[stopIndex];
+  const priceChangePct = direction === 'long'
+    ? (exitPrice - entryPrice) / entryPrice
+    : (entryPrice - exitPrice) / entryPrice;
+  const pnlPct = liquidated ? -1 : priceChangePct * leverage;
+  const margin = sizeUsd / leverage;
+  const pnlUsd = margin * pnlPct;
+
+  return {
+    entryIndex, entryDate: dates[entryIndex], entryPrice,
+    exitIndex: stopIndex, exitDate: dates[stopIndex], exitPrice,
+    liquidated, liquidationPrice, direction, leverage,
+    margin, notional: sizeUsd, pnlPct, pnlUsd,
+    daysHeld: stopIndex - entryIndex,
+  };
+}
+
 function computeMetrics(r) {
   const n = r.closes.length;
   const strategyReturn = r.strategyEquity[n - 1] - 1;
@@ -140,6 +178,14 @@ function formatUSD(v) {
   if (v == null || Number.isNaN(v)) return '—';
   const decimals = v < 1 ? 4 : v < 100 ? 2 : 0;
   return '$' + v.toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+}
+
+function formatSignedUSD(v) {
+  if (v == null || Number.isNaN(v)) return '—';
+  const sign = v < 0 ? '-' : v > 0 ? '+' : '';
+  const abs = Math.abs(v);
+  const decimals = abs < 100 ? 2 : 0;
+  return sign + '$' + abs.toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
 }
 
 function formatPct(v) {
@@ -200,7 +246,7 @@ function buildLegend(container, items) {
   });
 }
 
-function renderChart({ svg, tooltipEl, dates, series, markers, yFormat, tooltipFormat }) {
+function renderChart({ svg, tooltipEl, dates, series, markers, pointMarkers, hLines, onPointClick, yFormat, tooltipFormat }) {
   const rect = svg.getBoundingClientRect();
   const width = Math.max(300, rect.width);
   const height = 320;
@@ -236,6 +282,20 @@ function renderChart({ svg, tooltipEl, dates, series, markers, yFormat, tooltipF
   // baseline
   svg.appendChild(svgEl('line', { x1: margin.left, x2: width - margin.right, y1: margin.top + innerH, y2: margin.top + innerH, stroke: 'var(--baseline)', 'stroke-width': 1 }));
 
+  // reference horizontal lines (e.g. liquidation price)
+  if (hLines) {
+    hLines.forEach(hl => {
+      if (hl.value < yMin || hl.value > yMax) return;
+      const y = yForValue(hl.value);
+      svg.appendChild(svgEl('line', { x1: margin.left, x2: width - margin.right, y1: y, y2: y, stroke: hl.color, 'stroke-width': 1.5, 'stroke-dasharray': '5,4' }));
+      if (hl.label) {
+        const label = svgEl('text', { x: width - margin.right, y: y - 5, 'text-anchor': 'end', 'font-size': 11, fill: hl.color });
+        label.textContent = hl.label;
+        svg.appendChild(label);
+      }
+    });
+  }
+
   // x ticks
   const xTickCount = Math.min(6, n);
   for (let t = 0; t < xTickCount; t++) {
@@ -265,6 +325,20 @@ function renderChart({ svg, tooltipEl, dates, series, markers, yFormat, tooltipF
         ? `${x},${y - size} ${x - size},${y + size} ${x + size},${y + size}`
         : `${x - size},${y - size} ${x + size},${y - size} ${x},${y + size}`;
       svg.appendChild(svgEl('polygon', { points, fill: color, stroke: 'var(--surface-1)', 'stroke-width': 2 }));
+    });
+  }
+
+  // manual-sim entry/exit markers (shape-differentiated, neutral ink — kept
+  // out of the categorical hues so they never compete with the price/SMA series)
+  if (pointMarkers) {
+    pointMarkers.forEach(m => {
+      const x = xForIndex(m.index), y = yForValue(m.y), s = 8;
+      if (m.shape === 'entry') {
+        svg.appendChild(svgEl('rect', { x: x - s, y: y - s, width: s * 2, height: s * 2, fill: 'var(--text-primary)', stroke: 'var(--surface-1)', 'stroke-width': 2 }));
+      } else {
+        const points = `${x},${y - s * 1.2} ${x + s * 1.2},${y} ${x},${y + s * 1.2} ${x - s * 1.2},${y}`;
+        svg.appendChild(svgEl('polygon', { points, fill: 'var(--text-primary)', stroke: 'var(--surface-1)', 'stroke-width': 2 }));
+      }
     });
   }
 
@@ -315,6 +389,18 @@ function renderChart({ svg, tooltipEl, dates, series, markers, yFormat, tooltipF
   }
   hitRect.addEventListener('pointermove', handleMove);
   hitRect.addEventListener('pointerleave', handleLeave);
+
+  if (onPointClick) {
+    hitRect.style.cursor = 'crosshair';
+    hitRect.addEventListener('click', evt => {
+      const svgRect = svg.getBoundingClientRect();
+      if (svgRect.width === 0) return;
+      const px = (evt.clientX - svgRect.left) * (width / svgRect.width);
+      let idx = Math.round(((px - margin.left) / innerW) * (n - 1));
+      idx = Math.max(0, Math.min(n - 1, idx));
+      onPointClick(idx);
+    });
+  }
 }
 
 /* ---------- Asset list ---------- */
@@ -355,7 +441,16 @@ const longInput = document.getElementById('smaLong');
 const runBtn = document.getElementById('runBtn');
 const statusEl = document.getElementById('status');
 
+const simDirection = document.getElementById('simDirection');
+const simLeverage = document.getElementById('simLeverage');
+const simSize = document.getElementById('simSize');
+const simCloseNowBtn = document.getElementById('simCloseNowBtn');
+const simClearBtn = document.getElementById('simClearBtn');
+const simStatusEl = document.getElementById('simStatus');
+const simStatGrid = document.getElementById('simStatGrid');
+
 let lastResult = null;
+let manualSim = { entryIndex: null, exitIndex: null };
 
 function setStatus(msg, isError) {
   statusEl.textContent = msg;
@@ -367,6 +462,63 @@ function setStat(key, text, sentiment) {
   valueEl.textContent = text;
   valueEl.classList.remove('positive', 'negative');
   if (sentiment) valueEl.classList.add(sentiment);
+}
+
+function setSimStat(key, text, sentiment) {
+  const valueEl = document.querySelector(`#simStatGrid .stat-tile[data-stat="${key}"] .stat-value`);
+  valueEl.textContent = text;
+  valueEl.classList.remove('positive', 'negative');
+  if (sentiment) valueEl.classList.add(sentiment);
+}
+
+function resetManualSim() {
+  manualSim = { entryIndex: null, exitIndex: null };
+  simStatusEl.textContent = 'Click en el gráfico de precio para elegir tu entrada.';
+  simStatGrid.hidden = true;
+}
+
+function handleChartClick(idx) {
+  if (!lastResult) return;
+  if (manualSim.entryIndex == null) {
+    manualSim.entryIndex = idx;
+    manualSim.exitIndex = null;
+  } else if (manualSim.exitIndex == null) {
+    if (idx === manualSim.entryIndex) return;
+    manualSim.exitIndex = Math.max(idx, manualSim.entryIndex);
+    manualSim.entryIndex = Math.min(idx, manualSim.entryIndex);
+  } else {
+    manualSim.entryIndex = idx;
+    manualSim.exitIndex = null;
+  }
+  updateManualSim();
+}
+
+function updateManualSim() {
+  if (!lastResult) return;
+  const r = lastResult;
+  const sim = renderPriceChart(r);
+
+  if (manualSim.entryIndex == null) {
+    simStatusEl.textContent = 'Click en el gráfico de precio para elegir tu entrada.';
+    simStatGrid.hidden = true;
+    return;
+  }
+  if (sim == null) {
+    simStatusEl.textContent = `Entrada: ${r.dates[manualSim.entryIndex]} @ ${formatUSD(r.closes[manualSim.entryIndex])}. Click de nuevo para la salida, o usa "Cerrar al final del rango".`;
+    simStatGrid.hidden = true;
+    return;
+  }
+
+  simStatGrid.hidden = false;
+  setSimStat('simPnlUsd', formatSignedUSD(sim.pnlUsd), sim.pnlUsd >= 0 ? 'positive' : 'negative');
+  setSimStat('simPnlPct', formatPct(sim.pnlPct), sim.pnlPct >= 0 ? 'positive' : 'negative');
+  setSimStat('simMargin', formatUSD(sim.margin));
+  setSimStat('simLiquidation', sim.leverage > 1 ? formatUSD(sim.liquidationPrice) : 'N/A (sin apalancar)');
+  setSimStat('simDays', String(sim.daysHeld));
+
+  simStatusEl.textContent = sim.liquidated
+    ? `Posición liquidada el ${sim.exitDate} @ ${formatUSD(sim.exitPrice)} — se perdió el margen completo.`
+    : `${sim.direction === 'long' ? 'Long' : 'Short'} de ${sim.entryDate} a ${sim.exitDate}: ${formatPct(sim.pnlPct)} sobre el margen.`;
 }
 
 function renderTrades(trades, symbol) {
@@ -400,20 +552,31 @@ function renderTrades(trades, symbol) {
   });
 }
 
-function renderAll(r) {
-  const metrics = computeMetrics(r);
-  setStat('strategyReturn', formatPct(metrics.strategyReturn), metrics.strategyReturn >= 0 ? 'positive' : 'negative');
-  setStat('buyHoldReturn', formatPct(metrics.buyHoldReturn), metrics.buyHoldReturn >= 0 ? 'positive' : 'negative');
-  setStat('maxDrawdown', formatPct(metrics.maxDD), 'negative');
-  setStat('sharpe', metrics.sharpe.toFixed(2));
-  setStat('winRate', metrics.winRate == null ? '—' : (metrics.winRate * 100).toFixed(0) + '%');
-  setStat('trades', String(metrics.tradeCount));
-
+function renderPriceChart(r) {
   const markers = r.trades.flatMap(t => {
     const m = [{ index: t.entryIndex, type: 'buy', y: t.entryPrice }];
     if (!t.openAtEnd) m.push({ index: t.exitIndex, type: 'sell', y: t.exitPrice });
     return m;
   });
+
+  const pointMarkers = [];
+  const hLines = [];
+  let sim = null;
+  if (manualSim.entryIndex != null) {
+    pointMarkers.push({ index: manualSim.entryIndex, shape: 'entry', y: r.closes[manualSim.entryIndex] });
+  }
+  if (manualSim.entryIndex != null && manualSim.exitIndex != null) {
+    const direction = simDirection.value;
+    const leverage = Math.max(1, parseFloat(simLeverage.value) || 1);
+    const sizeUsd = Math.max(0, parseFloat(simSize.value) || 0);
+    sim = simulateManualTrade({
+      dates: r.dates, closes: r.closes,
+      entryIndex: manualSim.entryIndex, exitIndex: manualSim.exitIndex,
+      direction, leverage, sizeUsd,
+    });
+    pointMarkers.push({ index: sim.exitIndex, shape: 'exit', y: sim.exitPrice });
+    if (leverage > 1) hLines.push({ value: sim.liquidationPrice, color: 'var(--status-critical)', label: 'Liquidación' });
+  }
 
   renderChart({
     svg: document.getElementById('priceChart'),
@@ -425,15 +588,34 @@ function renderAll(r) {
       { name: `SMA ${r.longP}`, color: 'var(--series-3)', data: r.smaLong },
     ],
     markers,
+    pointMarkers,
+    hLines,
+    onPointClick: handleChartClick,
     yFormat: formatUSD,
   });
   buildLegend(document.getElementById('priceLegend'), [
     { name: 'Precio', color: 'var(--series-1)', type: 'line' },
     { name: `SMA ${r.shortP}`, color: 'var(--series-2)', type: 'line' },
     { name: `SMA ${r.longP}`, color: 'var(--series-3)', type: 'line' },
-    { name: 'Compra', color: 'var(--status-good)', type: 'marker' },
-    { name: 'Venta', color: 'var(--status-critical)', type: 'marker' },
+    { name: 'Compra (estrategia)', color: 'var(--status-good)', type: 'marker' },
+    { name: 'Venta (estrategia)', color: 'var(--status-critical)', type: 'marker' },
+    { name: 'Tu entrada', color: 'var(--text-primary)', type: 'marker' },
+    { name: 'Tu salida', color: 'var(--text-primary)', type: 'marker' },
   ]);
+
+  return sim;
+}
+
+function renderAll(r) {
+  const metrics = computeMetrics(r);
+  setStat('strategyReturn', formatPct(metrics.strategyReturn), metrics.strategyReturn >= 0 ? 'positive' : 'negative');
+  setStat('buyHoldReturn', formatPct(metrics.buyHoldReturn), metrics.buyHoldReturn >= 0 ? 'positive' : 'negative');
+  setStat('maxDrawdown', formatPct(metrics.maxDD), 'negative');
+  setStat('sharpe', metrics.sharpe.toFixed(2));
+  setStat('winRate', metrics.winRate == null ? '—' : (metrics.winRate * 100).toFixed(0) + '%');
+  setStat('trades', String(metrics.tradeCount));
+
+  renderPriceChart(r);
 
   renderChart({
     svg: document.getElementById('equityChart'),
@@ -475,6 +657,7 @@ async function runBacktestFlow() {
     setStatus('Corriendo backtest…');
     const result = backtest(dates, closes, shortP, longP);
     lastResult = { dates, closes, shortP, longP, symbol, ...result };
+    resetManualSim();
     renderAll(lastResult);
     setStatus(`Listo — ${closes.length} días de datos de ${symbol}, del ${dates[0]} al ${dates[dates.length - 1]}.`);
   } catch (err) {
@@ -492,5 +675,21 @@ function debounce(fn, ms) {
 
 runBtn.addEventListener('click', runBacktestFlow);
 window.addEventListener('resize', debounce(() => { if (lastResult) renderAll(lastResult); }, 200));
+
+[simDirection, simLeverage, simSize].forEach(el => el.addEventListener('input', updateManualSim));
+
+simCloseNowBtn.addEventListener('click', () => {
+  if (!lastResult || manualSim.entryIndex == null) {
+    simStatusEl.textContent = 'Primero elige una entrada haciendo click en el gráfico de precio.';
+    return;
+  }
+  manualSim.exitIndex = lastResult.dates.length - 1;
+  updateManualSim();
+});
+
+simClearBtn.addEventListener('click', () => {
+  resetManualSim();
+  if (lastResult) renderPriceChart(lastResult);
+});
 
 loadAssetOptions().finally(runBacktestFlow);

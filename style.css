@@ -189,6 +189,55 @@ body {
 .stat-value.positive { color: var(--success-text); }
 .stat-value.negative { color: var(--status-critical); }
 
+/* Manual trade simulator */
+.sim-card {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.sim-card h2 { font-size: 1rem; margin: 0; }
+.sim-help {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.88rem;
+}
+.sim-controls {
+  display: flex;
+  align-items: flex-end;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.btn-secondary {
+  font: inherit;
+  font-weight: 600;
+  font-size: 0.95rem;
+  padding: 9px 20px;
+  border-radius: 8px;
+  border: 1px solid var(--baseline);
+  background: transparent;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+.btn-secondary:hover { background: var(--page-plane); }
+#simCloseNowBtn {
+  font: inherit;
+  font-weight: 600;
+  font-size: 0.95rem;
+  padding: 9px 20px;
+  border-radius: 8px;
+  border: none;
+  background: var(--series-1);
+  color: #fff;
+  cursor: pointer;
+}
+#simCloseNowBtn:hover { filter: brightness(1.08); }
+#simStatGrid { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
+#simStatGrid .stat-value { font-size: 1.3rem; }
+
 /* Chart cards */
 .chart-card, .trades-card {
   background: var(--surface-1);
