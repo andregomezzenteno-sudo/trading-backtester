@@ -172,6 +172,88 @@ function computeMetrics(r) {
   return { strategyReturn, buyHoldReturn, maxDD, sharpe, winRate, tradeCount: r.trades.length };
 }
 
+function maxDrawdown(equitySeries) {
+  let peak = equitySeries[0], maxDD = 0;
+  for (const v of equitySeries) {
+    peak = Math.max(peak, v);
+    maxDD = Math.min(maxDD, (v - peak) / peak);
+  }
+  return maxDD;
+}
+
+function annualizedVol(rets, periodsPerYear) {
+  const mean = rets.reduce((a, b) => a + b, 0) / (rets.length || 1);
+  const variance = rets.reduce((a, b) => a + (b - mean) ** 2, 0) / (rets.length || 1);
+  return Math.sqrt(variance) * Math.sqrt(periodsPerYear);
+}
+
+// Applies textbook evergreen/PE-structure mechanics on top of the SAME real
+// closes already loaded — this is an illustrative model, not real fund data
+// (no free source for that exists, which is the whole point being illustrated):
+//  - illiquidity premium: a constant annualized return boost for locking up capital
+//  - J-curve: an early fee drag during a ~6-month "deployment ramp"
+//  - appraisal smoothing: NAV is only marked once per quarter, and each mark only
+//    partially catches up to the true value (reported = theta*true + (1-theta)*prevReported).
+//    This partial-adjustment ("return smoothing") model is the standard academic
+//    explanation for why appraisal-based asset classes look less volatile than they
+//    are — see Geltner (real estate) and Getmansky/Lo/Makarov (hedge funds/PE) —
+//    and produces a much stronger, more realistic damping than naive infrequent
+//    sampling alone: temporally aggregating i.i.d. daily returns into quarterly
+//    ones barely changes ANNUALIZED volatility (square-root-of-time scaling), but
+//    a genuinely lagging appraisal does.
+function computeEvergreenSeries({ closes, premiumAnnual, quarterDays = 91, smoothingTheta = 0.35 }) {
+  const n = closes.length;
+  const dailyRet = new Array(n).fill(0);
+  for (let i = 1; i < n; i++) dailyRet[i] = (closes[i] - closes[i - 1]) / closes[i - 1];
+
+  const premiumDaily = Math.pow(1 + premiumAnnual, 1 / 365) - 1;
+  const rampDays = Math.min(180, Math.floor(n / 4));
+  const dragDaily = 0.02 / 365; // illustrative ~2%/yr fee drag during deployment
+
+  const trueEquity = new Array(n).fill(1);
+  for (let i = 1; i < n; i++) {
+    let ret = dailyRet[i] + premiumDaily;
+    if (i <= rampDays) ret -= dragDaily;
+    trueEquity[i] = trueEquity[i - 1] * (1 + ret);
+  }
+
+  const reportedEquity = new Array(n).fill(trueEquity[0]);
+  let lastReported = trueEquity[0];
+  const marks = [0];
+  for (let i = 1; i < n; i++) {
+    if (i % quarterDays === 0 || i === n - 1) {
+      lastReported = smoothingTheta * trueEquity[i] + (1 - smoothingTheta) * lastReported;
+      marks.push(i);
+    }
+    reportedEquity[i] = lastReported;
+  }
+
+  const quarterlyReturns = [];
+  for (let k = 1; k < marks.length; k++) {
+    quarterlyReturns.push((reportedEquity[marks[k]] - reportedEquity[marks[k - 1]]) / reportedEquity[marks[k - 1]]);
+  }
+
+  return { trueEquity, reportedEquity, quarterlyReturns, quarterDays };
+}
+
+// Given a requested exit date, works out the earliest date the investor could
+// actually withdraw: max(lock-up end, requested date), rounded up to the next
+// quarterly liquidity window.
+function computeExitAvailability({ dates, requestedDate, lockupMonths, quarterDays }) {
+  const n = dates.length;
+  let requestedIndex = dates.findIndex(d => d >= requestedDate);
+  if (requestedIndex === -1) requestedIndex = n - 1;
+
+  const lockupEndIndex = Math.min(n - 1, Math.round(lockupMonths * 30));
+  const earliestPossible = Math.max(requestedIndex, lockupEndIndex);
+
+  let exitIndex = Math.ceil(earliestPossible / quarterDays) * quarterDays;
+  const clampedByData = exitIndex > n - 1;
+  if (clampedByData) exitIndex = n - 1;
+
+  return { requestedIndex, lockupEndIndex, exitIndex, clampedByData };
+}
+
 /* ---------- Formatting ---------- */
 
 function formatUSD(v) {
@@ -449,6 +531,11 @@ const simClearBtn = document.getElementById('simClearBtn');
 const simStatusEl = document.getElementById('simStatus');
 const simStatGrid = document.getElementById('simStatGrid');
 
+const peLockup = document.getElementById('peLockup');
+const pePremium = document.getElementById('pePremium');
+const peExitRequest = document.getElementById('peExitRequest');
+const peExitStatusEl = document.getElementById('peExitStatus');
+
 let lastResult = null;
 let manualSim = { entryIndex: null, exitIndex: null };
 
@@ -575,6 +662,65 @@ function renderPriceChart(r) {
   return sim;
 }
 
+function updatePEComparator(r) {
+  if (peExitRequest.min !== r.dates[0] || peExitRequest.max !== r.dates[r.dates.length - 1]) {
+    peExitRequest.min = r.dates[0];
+    peExitRequest.max = r.dates[r.dates.length - 1];
+    peExitRequest.value = r.dates[Math.floor(r.dates.length / 2)];
+  }
+
+  const lockupMonths = Math.max(0, parseFloat(peLockup.value) || 0);
+  const premiumAnnual = Math.max(0, parseFloat(pePremium.value) || 0) / 100;
+  const quarterDays = 91;
+
+  const { reportedEquity, quarterlyReturns } = computeEvergreenSeries({ closes: r.closes, premiumAnnual, quarterDays });
+
+  const liquidDailyRets = [];
+  for (let i = 1; i < r.closes.length; i++) liquidDailyRets.push((r.closes[i] - r.closes[i - 1]) / r.closes[i - 1]);
+
+  const liquidReturn = r.buyHoldEquity[r.buyHoldEquity.length - 1] - 1;
+  const evergreenReturn = reportedEquity[reportedEquity.length - 1] - 1;
+  const liquidVol = annualizedVol(liquidDailyRets, 365);
+  const reportedVol = annualizedVol(quarterlyReturns, 365 / quarterDays);
+  const liquidDD = maxDrawdown(r.buyHoldEquity);
+  const reportedDD = maxDrawdown(reportedEquity);
+
+  setStat('peLiquidReturn', formatPct(liquidReturn), liquidReturn >= 0 ? 'positive' : 'negative');
+  setStat('peEvergreenReturn', formatPct(evergreenReturn), evergreenReturn >= 0 ? 'positive' : 'negative');
+  setStat('peLiquidVol', formatPct(liquidVol));
+  setStat('peReportedVol', formatPct(reportedVol));
+  setStat('peLiquidDD', formatPct(liquidDD), 'negative');
+  setStat('peReportedDD', formatPct(reportedDD), 'negative');
+
+  const requestedDate = peExitRequest.value || r.dates[Math.floor(r.dates.length / 2)];
+  const { requestedIndex, exitIndex, clampedByData } = computeExitAvailability({
+    dates: r.dates, requestedDate, lockupMonths, quarterDays,
+  });
+  const waitDays = exitIndex - requestedIndex;
+  if (waitDays <= 0) {
+    peExitStatusEl.textContent = `Pediste salir el ${r.dates[requestedIndex]} — coincide con (o cae después de) tu ventana de liquidez, así que podrías salir ese día.`;
+  } else {
+    peExitStatusEl.textContent = `Pediste salir el ${r.dates[requestedIndex]}. Con lock-up de ${lockupMonths} meses + ventanas trimestrales, tu salida real más temprana sería el ${r.dates[exitIndex]} — ${waitDays} días de espera adicionales.`
+      + (clampedByData ? ' (Esto ya cae al final del rango de datos cargado; en la práctica esperarías incluso más.)' : '');
+  }
+
+  renderChart({
+    svg: document.getElementById('peChart'),
+    tooltipEl: document.getElementById('peTooltip'),
+    dates: r.dates,
+    series: [
+      { name: 'Líquido (real)', color: 'var(--series-1)', data: r.buyHoldEquity.map(v => (v - 1) * 100) },
+      { name: 'Evergreen (reportado)', color: 'var(--series-2)', data: reportedEquity.map(v => (v - 1) * 100) },
+    ],
+    yFormat: v => (v > 0 ? '+' : '') + v.toFixed(0) + '%',
+    tooltipFormat: v => (v > 0 ? '+' : '') + v.toFixed(2) + '%',
+  });
+  buildLegend(document.getElementById('peLegend'), [
+    { name: 'Líquido (real)', color: 'var(--series-1)', type: 'line' },
+    { name: 'Evergreen (reportado)', color: 'var(--series-2)', type: 'line' },
+  ]);
+}
+
 function renderAll(r) {
   const metrics = computeMetrics(r);
   setStat('strategyReturn', formatPct(metrics.strategyReturn), metrics.strategyReturn >= 0 ? 'positive' : 'negative');
@@ -601,6 +747,8 @@ function renderAll(r) {
     { name: 'Estrategia', color: 'var(--series-1)', type: 'line' },
     { name: 'Buy & hold', color: 'var(--series-2)', type: 'line' },
   ]);
+
+  updatePEComparator(r);
 }
 
 async function runBacktestFlow() {
@@ -658,5 +806,9 @@ simClearBtn.addEventListener('click', () => {
   resetManualSim();
   if (lastResult) renderPriceChart(lastResult);
 });
+
+[peLockup, pePremium, peExitRequest].forEach(el => el.addEventListener('input', () => {
+  if (lastResult) updatePEComparator(lastResult);
+}));
 
 loadAssetOptions().finally(runBacktestFlow);

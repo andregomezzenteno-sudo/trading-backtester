@@ -17,12 +17,19 @@ step — open `index.html` and it runs.
    - Price chart with both SMAs and buy/sell signal markers
    - Equity curve: the strategy vs. simply buying and holding the asset
    - Metrics: total return, max drawdown, annualized Sharpe ratio, win rate, trade count
-   - A full trade-by-trade log
 4. **Manual "what-if" simulator:** click two points on the price chart to mark your
    own entry and exit, pick long or short, and optionally add leverage. It computes
    P&L on margin the way a real leveraged position would — including **liquidation**:
    if price moves against you by `1/leverage` before your exit, the position is
    force-closed there instead of quietly riding out an impossible drawdown.
+5. **Evergreen / private-equity structure comparator:** takes the same real asset
+   and shows what it would look like wrapped in a PE-style evergreen fund instead —
+   lock-up, quarterly liquidity windows, an illiquidity premium, and appraisal-based
+   reporting that only partially catches up to the true value each quarter. The
+   point: reported volatility and drawdown come out much lower than the *real*
+   underlying risk — not because the structure is safer, but because of how it's
+   priced. Pick a hypothetical exit date and it tells you how long you'd actually
+   have to wait past lock-up + the next liquidity window.
 
 ## Methodology notes (the part that actually matters)
 
@@ -41,6 +48,16 @@ step — open `index.html` and it runs.
   entryPrice * (1 ± 1/leverage)`, ignoring maintenance-margin buffers and fees —
   close enough to be honest about the risk without modeling a specific exchange's
   exact margin rules. See `simulateManualTrade()` in [app.js](app.js).
+- **The evergreen comparator is an illustrative model, explicitly, not real fund
+  data** — no free (or even cheap) source of real PE fund NAVs/returns exists,
+  which is itself the point being illustrated. The appraisal-smoothing mechanic
+  (`reported = θ·true + (1-θ)·previousReported`, θ=0.35) follows the standard
+  academic "return smoothing" model for appraisal-based asset classes (Geltner for
+  real estate; Getmansky, Lo & Makarov for hedge funds/PE) rather than a naive
+  moving average — a plain trailing average of i.i.d. daily noise barely changes
+  *annualized* volatility (square-root-of-time scaling cancels it out), so it
+  wouldn't actually demonstrate the effect. See `computeEvergreenSeries()` in
+  [app.js](app.js).
 
 ## Architecture
 

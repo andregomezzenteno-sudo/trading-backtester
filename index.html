@@ -155,6 +155,63 @@
     </div>
   </section>
 
+  <section class="pe-card" aria-label="Comparador de estructura evergreen">
+    <h2>¿Y si esto fuera un fondo evergreen (estilo private equity)?</h2>
+    <p class="pe-help">
+      No existen datos públicos y gratuitos de fondos de private equity reales — son opacos por diseño, y esa
+      opacidad es justo lo que está detrás de la tendencia de "democratizar" el acceso. Esto <strong>no es un fondo
+      real</strong>: es el mismo activo de arriba, con las mecánicas típicas de una estructura evergreen aplicadas
+      encima — lock-up, ventanas de liquidez trimestrales, prima de iliquidez, y una valuación trimestral que solo
+      se ajusta parcialmente al valor real (así funcionan las tasaciones de activos privados) en vez de precio de
+      mercado diario. Todo etiquetado como ilustrativo, ajustable abajo.
+    </p>
+    <div class="sim-controls">
+      <div class="control control-narrow">
+        <label for="peLockup">Lock-up (meses)</label>
+        <input type="number" id="peLockup" value="12" min="0" max="60" step="1">
+      </div>
+      <div class="control control-narrow">
+        <label for="pePremium">Prima de iliquidez (% anual)</label>
+        <input type="number" id="pePremium" value="4" min="0" max="15" step="0.5">
+      </div>
+      <div class="control">
+        <label for="peExitRequest">¿Cuándo querrías salir?</label>
+        <input type="date" id="peExitRequest">
+      </div>
+    </div>
+    <p class="pe-help">Ventana de liquidez fija en este modelo: trimestral (~91 días), como en la mayoría de fondos evergreen reales.</p>
+
+    <div class="chart-card-head">
+      <h2>Líquido (real, diario) vs. evergreen (reportado, trimestral)</h2>
+      <div class="legend" id="peLegend"></div>
+    </div>
+    <div class="chart-wrap">
+      <svg id="peChart" class="viz-root" role="img" aria-label="Comparación entre el valor líquido diario y el valor evergreen reportado trimestralmente"></svg>
+      <div class="tooltip" id="peTooltip" hidden></div>
+    </div>
+
+    <div class="stat-grid" id="peStatGrid">
+      <div class="stat-tile" data-stat="peLiquidReturn"><span class="stat-label">Retorno líquido (real)</span><span class="stat-value">—</span></div>
+      <div class="stat-tile" data-stat="peEvergreenReturn"><span class="stat-label">Retorno evergreen (real, con prima)</span><span class="stat-value">—</span></div>
+      <div class="stat-tile" data-stat="peLiquidVol"><span class="stat-label">Volatilidad real (anualizada)</span><span class="stat-value">—</span></div>
+      <div class="stat-tile" data-stat="peReportedVol"><span class="stat-label">Volatilidad "reportada" evergreen</span><span class="stat-value">—</span></div>
+      <div class="stat-tile" data-stat="peLiquidDD"><span class="stat-label">Máx. drawdown real</span><span class="stat-value">—</span></div>
+      <div class="stat-tile" data-stat="peReportedDD"><span class="stat-label">Máx. drawdown "reportado" evergreen</span><span class="stat-value">—</span></div>
+    </div>
+
+    <p class="status" id="peExitStatus" role="status" aria-live="polite"></p>
+
+    <p class="pe-callout">
+      <strong>El punto clave:</strong> el fondo evergreen no es menos riesgoso — es exactamente el mismo activo
+      subyacente de arriba. Solo reporta su valor cada trimestre, y cada reporte solo se ajusta parcialmente hacia
+      el valor real (así funciona una tasación), arrastrando el rezago del trimestre anterior. Eso es lo que hace
+      que la volatilidad y el drawdown se vean artificialmente menores — está documentado en la literatura
+      académica de private equity y real estate como <em>"stale pricing"</em> o <em>"return smoothing"</em>
+      (Geltner; Getmansky, Lo &amp; Makarov) — no es un error del modelo, es la mecánica real que hace que el PE
+      "parezca" más estable de lo que en verdad es.
+    </p>
+  </section>
+
   <footer class="app-footer">
     <p><strong>Nota:</strong> herramienta educativa/de investigación. No es asesoría de inversión ni ejecuta órdenes reales. Los resultados históricos no garantizan resultados futuros.</p>
     <p>Datos de mercado: <a href="https://www.coingecko.com/" target="_blank" rel="noopener">CoinGecko API</a> (tier gratuito, histórico limitado a 365 días). Código abierto en <a href="https://github.com/andregomezzenteno-sudo/trading-backtester" target="_blank" rel="noopener">GitHub</a>.</p>
