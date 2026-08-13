@@ -239,7 +239,7 @@ body {
 #simStatGrid .stat-value { font-size: 1.3rem; }
 
 /* Chart cards */
-.chart-card, .trades-card {
+.chart-card {
   background: var(--surface-1);
   border: 1px solid var(--border);
   border-radius: 12px;
@@ -253,7 +253,7 @@ body {
   gap: 8px;
   margin-bottom: 4px;
 }
-.chart-card-head h2, .trades-card h2 {
+.chart-card-head h2 {
   font-size: 1rem;
   margin: 0 0 12px;
 }
@@ -323,35 +323,6 @@ svg.viz-root {
 }
 .tooltip .tt-name { color: var(--text-secondary); }
 .tooltip .tt-val { color: var(--text-primary); font-weight: 600; margin-left: auto; padding-left: 10px; }
-
-/* Trades table */
-.table-wrap { overflow-x: auto; }
-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 0.88rem;
-}
-th, td {
-  text-align: left;
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--gridline);
-  white-space: nowrap;
-}
-th {
-  color: var(--text-muted);
-  font-weight: 600;
-  font-size: 0.76rem;
-  text-transform: uppercase;
-  letter-spacing: 0.02em;
-}
-td.num { font-variant-numeric: tabular-nums; }
-td.positive { color: var(--success-text); }
-td.negative { color: var(--status-critical); }
-.empty-state {
-  color: var(--text-muted);
-  font-size: 0.88rem;
-  padding: 10px 0 16px;
-}
 
 /* Footer */
 .app-footer {

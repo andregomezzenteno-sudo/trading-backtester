@@ -521,37 +521,6 @@ function updateManualSim() {
     : `${sim.direction === 'long' ? 'Long' : 'Short'} de ${sim.entryDate} a ${sim.exitDate}: ${formatPct(sim.pnlPct)} sobre el margen.`;
 }
 
-function renderTrades(trades, symbol) {
-  const tbody = document.querySelector('#tradesTable tbody');
-  const empty = document.getElementById('tradesEmpty');
-  tbody.textContent = '';
-  if (!trades.length) {
-    empty.hidden = false;
-    empty.textContent = 'No hubo cruces de medias en este rango — sin operaciones.';
-    return;
-  }
-  empty.hidden = true;
-  trades.forEach((t, i) => {
-    const tr = document.createElement('tr');
-    const cells = [
-      String(i + 1),
-      t.entryDate,
-      formatUSD(t.entryPrice),
-      t.exitDate + (t.openAtEnd ? ' (abierta)' : ''),
-      formatUSD(t.exitPrice),
-      formatPct(t.returnPct),
-    ];
-    cells.forEach((text, ci) => {
-      const td = document.createElement('td');
-      td.textContent = text;
-      if (ci >= 2) td.classList.add('num');
-      if (ci === 5) td.classList.add(t.returnPct >= 0 ? 'positive' : 'negative');
-      tr.appendChild(td);
-    });
-    tbody.appendChild(tr);
-  });
-}
-
 function renderPriceChart(r) {
   const markers = r.trades.flatMap(t => {
     const m = [{ index: t.entryIndex, type: 'buy', y: t.entryPrice }];
@@ -632,8 +601,6 @@ function renderAll(r) {
     { name: 'Estrategia', color: 'var(--series-1)', type: 'line' },
     { name: 'Buy & hold', color: 'var(--series-2)', type: 'line' },
   ]);
-
-  renderTrades(r.trades, r.symbol);
 }
 
 async function runBacktestFlow() {
