@@ -32,6 +32,57 @@ async function fetchPrices(coinId, days) {
   return { dates, closes };
 }
 
+/* ---------- Data fetching (Twelve Data — stocks/indices/commodities) ---------- */
+
+// Free-tier key, intentionally public: client-side calls need it embedded in
+// the code that's already public on GitHub. Rate-limited (8 req/min, 800/day),
+// no billing risk — worst case it stops responding until the quota resets.
+const TWELVE_DATA_API_KEY = '861f8f9854f843bb929a3eb03b49d5d7';
+
+// Curated, not searched: Twelve Data's free tier doesn't include a market-cap-
+// ranked symbol list, and dynamically listing thousands of tickers would burn
+// through the per-minute quota just to populate a dropdown. Indices and several
+// commodities require a paid plan as direct symbols, so those are served via
+// well-known ETF proxies instead — labeled as such, not hidden.
+const ASSET_CATALOG = {
+  stocks: [
+    ['AAPL', 'Apple'], ['MSFT', 'Microsoft'], ['GOOGL', 'Alphabet (Google)'], ['AMZN', 'Amazon'],
+    ['NVDA', 'NVIDIA'], ['META', 'Meta Platforms'], ['TSLA', 'Tesla'], ['JPM', 'JPMorgan Chase'],
+    ['V', 'Visa'], ['WMT', 'Walmart'], ['JNJ', 'Johnson & Johnson'], ['PG', 'Procter & Gamble'],
+    ['XOM', 'Exxon Mobil'], ['KO', 'Coca-Cola'], ['DIS', 'Disney'], ['NFLX', 'Netflix'],
+    ['AMD', 'AMD'], ['INTC', 'Intel'], ['BA', 'Boeing'], ['NKE', 'Nike'],
+    ['PFE', 'Pfizer'], ['CSCO', 'Cisco'], ['ORCL', 'Oracle'], ['ADBE', 'Adobe'], ['CRM', 'Salesforce'],
+  ],
+  indices: [
+    ['SPY', 'S&P 500 (vía ETF SPY)'], ['QQQ', 'Nasdaq 100 (vía ETF QQQ)'],
+    ['DIA', 'Dow Jones (vía ETF DIA)'], ['IWM', 'Russell 2000 (vía ETF IWM)'],
+  ],
+  commodities: [
+    ['GLD', 'Oro (vía ETF GLD)'], ['SLV', 'Plata (vía ETF SLV)'], ['USO', 'Petróleo WTI (vía ETF USO)'],
+    ['UNG', 'Gas natural (vía ETF UNG)'], ['DBA', 'Agricultura (vía ETF DBA)'], ['DBC', 'Commodities amplio (vía ETF DBC)'],
+  ],
+};
+
+async function fetchPricesTwelveData(symbol, outputsize) {
+  const url = `https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(symbol)}&interval=1day&outputsize=${outputsize}&apikey=${TWELVE_DATA_API_KEY}`;
+  let res = await fetch(url);
+  let json = await res.json();
+  if (json.status === 'error' && json.code === 429) {
+    // free tier is limited per MINUTE, not per second — worth a real wait.
+    await new Promise(r => setTimeout(r, 8000));
+    res = await fetch(url);
+    json = await res.json();
+  }
+  if (!res.ok || json.status === 'error') {
+    throw new Error(json.message || ('API error ' + res.status));
+  }
+  const values = Array.isArray(json.values) ? json.values : [];
+  const chronological = values.slice().reverse(); // Twelve Data returns newest-first
+  const dates = chronological.map(v => v.datetime);
+  const closes = chronological.map(v => parseFloat(v.close));
+  return { dates, closes };
+}
+
 /* ---------- Strategy math ---------- */
 
 function sma(values, period) {
@@ -149,7 +200,7 @@ function simulateManualTrade({ dates, closes, entryIndex, exitIndex, direction, 
   };
 }
 
-function computeMetrics(r) {
+function computeMetrics(r, barsPerYear) {
   const n = r.closes.length;
   const strategyReturn = r.strategyEquity[n - 1] - 1;
   const buyHoldReturn = r.buyHoldEquity[n - 1] - 1;
@@ -164,7 +215,7 @@ function computeMetrics(r) {
   const mean = rets.reduce((a, b) => a + b, 0) / (rets.length || 1);
   const variance = rets.reduce((a, b) => a + (b - mean) ** 2, 0) / (rets.length || 1);
   const std = Math.sqrt(variance);
-  const sharpe = std > 0 ? (mean / std) * Math.sqrt(365) : 0;
+  const sharpe = std > 0 ? (mean / std) * Math.sqrt(barsPerYear) : 0;
 
   const wins = r.trades.filter(t => t.returnPct > 0).length;
   const winRate = r.trades.length ? wins / r.trades.length : null;
@@ -201,19 +252,24 @@ function annualizedVol(rets, periodsPerYear) {
 //    sampling alone: temporally aggregating i.i.d. daily returns into quarterly
 //    ones barely changes ANNUALIZED volatility (square-root-of-time scaling), but
 //    a genuinely lagging appraisal does.
-function computeEvergreenSeries({ closes, premiumAnnual, quarterDays = 91, smoothingTheta = 0.35 }) {
+// quarterBars/monthBars are derived from barsPerYear (365 for crypto, which
+// trades every calendar day; 252 for stocks/indices/commodities, which only
+// trade on business days) so "one quarter" and "one month" line up with real
+// calendar time regardless of the underlying asset's trading calendar.
+function computeEvergreenSeries({ closes, premiumAnnual, barsPerYear, smoothingTheta = 0.35 }) {
   const n = closes.length;
+  const quarterBars = Math.max(1, Math.round(barsPerYear / 4));
   const dailyRet = new Array(n).fill(0);
   for (let i = 1; i < n; i++) dailyRet[i] = (closes[i] - closes[i - 1]) / closes[i - 1];
 
-  const premiumDaily = Math.pow(1 + premiumAnnual, 1 / 365) - 1;
-  const rampDays = Math.min(180, Math.floor(n / 4));
-  const dragDaily = 0.02 / 365; // illustrative ~2%/yr fee drag during deployment
+  const premiumPerBar = Math.pow(1 + premiumAnnual, 1 / barsPerYear) - 1;
+  const rampBars = Math.min(Math.round(barsPerYear / 2), Math.floor(n / 4));
+  const dragPerBar = 0.02 / barsPerYear; // illustrative ~2%/yr fee drag during deployment
 
   const trueEquity = new Array(n).fill(1);
   for (let i = 1; i < n; i++) {
-    let ret = dailyRet[i] + premiumDaily;
-    if (i <= rampDays) ret -= dragDaily;
+    let ret = dailyRet[i] + premiumPerBar;
+    if (i <= rampBars) ret -= dragPerBar;
     trueEquity[i] = trueEquity[i - 1] * (1 + ret);
   }
 
@@ -221,7 +277,7 @@ function computeEvergreenSeries({ closes, premiumAnnual, quarterDays = 91, smoot
   let lastReported = trueEquity[0];
   const marks = [0];
   for (let i = 1; i < n; i++) {
-    if (i % quarterDays === 0 || i === n - 1) {
+    if (i % quarterBars === 0 || i === n - 1) {
       lastReported = smoothingTheta * trueEquity[i] + (1 - smoothingTheta) * lastReported;
       marks.push(i);
     }
@@ -233,21 +289,22 @@ function computeEvergreenSeries({ closes, premiumAnnual, quarterDays = 91, smoot
     quarterlyReturns.push((reportedEquity[marks[k]] - reportedEquity[marks[k - 1]]) / reportedEquity[marks[k - 1]]);
   }
 
-  return { trueEquity, reportedEquity, quarterlyReturns, quarterDays };
+  return { trueEquity, reportedEquity, quarterlyReturns, quarterBars };
 }
 
 // Given a requested exit date, works out the earliest date the investor could
 // actually withdraw: max(lock-up end, requested date), rounded up to the next
 // quarterly liquidity window.
-function computeExitAvailability({ dates, requestedDate, lockupMonths, quarterDays }) {
+function computeExitAvailability({ dates, requestedDate, lockupMonths, barsPerYear, quarterBars }) {
   const n = dates.length;
   let requestedIndex = dates.findIndex(d => d >= requestedDate);
   if (requestedIndex === -1) requestedIndex = n - 1;
 
-  const lockupEndIndex = Math.min(n - 1, Math.round(lockupMonths * 30));
+  const monthBars = barsPerYear / 12;
+  const lockupEndIndex = Math.min(n - 1, Math.round(lockupMonths * monthBars));
   const earliestPossible = Math.max(requestedIndex, lockupEndIndex);
 
-  let exitIndex = Math.ceil(earliestPossible / quarterDays) * quarterDays;
+  let exitIndex = Math.ceil(earliestPossible / quarterBars) * quarterBars;
   const clampedByData = exitIndex > n - 1;
   if (clampedByData) exitIndex = n - 1;
 
@@ -514,8 +571,25 @@ async function loadAssetOptions() {
   }
 }
 
+function populateStaticAssetOptions(type) {
+  assetSelect.textContent = '';
+  (ASSET_CATALOG[type] || []).forEach(([symbol, label]) => {
+    const opt = document.createElement('option');
+    opt.value = symbol;
+    opt.dataset.symbol = symbol;
+    opt.textContent = `${label} (${symbol})`;
+    assetSelect.appendChild(opt);
+  });
+}
+
+async function refreshAssetOptions(type) {
+  if (type === 'crypto') await loadAssetOptions();
+  else populateStaticAssetOptions(type);
+}
+
 /* ---------- Page wiring ---------- */
 
+const assetTypeSelect = document.getElementById('assetType');
 const assetSelect = document.getElementById('asset');
 const rangeSelect = document.getElementById('range');
 const shortInput = document.getElementById('smaShort');
@@ -671,17 +745,17 @@ function updatePEComparator(r) {
 
   const lockupMonths = Math.max(0, parseFloat(peLockup.value) || 0);
   const premiumAnnual = Math.max(0, parseFloat(pePremium.value) || 0) / 100;
-  const quarterDays = 91;
+  const barsPerYear = r.barsPerYear;
 
-  const { reportedEquity, quarterlyReturns } = computeEvergreenSeries({ closes: r.closes, premiumAnnual, quarterDays });
+  const { reportedEquity, quarterlyReturns, quarterBars } = computeEvergreenSeries({ closes: r.closes, premiumAnnual, barsPerYear });
 
   const liquidDailyRets = [];
   for (let i = 1; i < r.closes.length; i++) liquidDailyRets.push((r.closes[i] - r.closes[i - 1]) / r.closes[i - 1]);
 
   const liquidReturn = r.buyHoldEquity[r.buyHoldEquity.length - 1] - 1;
   const evergreenReturn = reportedEquity[reportedEquity.length - 1] - 1;
-  const liquidVol = annualizedVol(liquidDailyRets, 365);
-  const reportedVol = annualizedVol(quarterlyReturns, 365 / quarterDays);
+  const liquidVol = annualizedVol(liquidDailyRets, barsPerYear);
+  const reportedVol = annualizedVol(quarterlyReturns, barsPerYear / quarterBars);
   const liquidDD = maxDrawdown(r.buyHoldEquity);
   const reportedDD = maxDrawdown(reportedEquity);
 
@@ -694,7 +768,7 @@ function updatePEComparator(r) {
 
   const requestedDate = peExitRequest.value || r.dates[Math.floor(r.dates.length / 2)];
   const { requestedIndex, exitIndex, clampedByData } = computeExitAvailability({
-    dates: r.dates, requestedDate, lockupMonths, quarterDays,
+    dates: r.dates, requestedDate, lockupMonths, barsPerYear, quarterBars,
   });
   const waitDays = exitIndex - requestedIndex;
   if (waitDays <= 0) {
@@ -722,7 +796,7 @@ function updatePEComparator(r) {
 }
 
 function renderAll(r) {
-  const metrics = computeMetrics(r);
+  const metrics = computeMetrics(r, r.barsPerYear);
   setStat('strategyReturn', formatPct(metrics.strategyReturn), metrics.strategyReturn >= 0 ? 'positive' : 'negative');
   setStat('buyHoldReturn', formatPct(metrics.buyHoldReturn), metrics.buyHoldReturn >= 0 ? 'positive' : 'negative');
   setStat('maxDrawdown', formatPct(metrics.maxDD), 'negative');
@@ -752,32 +826,37 @@ function renderAll(r) {
 }
 
 async function runBacktestFlow() {
-  const coinId = assetSelect.value;
-  const symbol = assetSelect.selectedOptions[0].dataset.symbol;
+  const assetType = assetTypeSelect.value;
+  const assetId = assetSelect.value;
+  const symbol = assetSelect.selectedOptions[0] ? assetSelect.selectedOptions[0].dataset.symbol : assetId;
   const days = rangeSelect.value;
   const shortP = parseInt(shortInput.value, 10);
   const longP = parseInt(longInput.value, 10);
+  const barsPerYear = assetType === 'crypto' ? 365 : 252;
 
+  if (!assetId) { setStatus('Elige un activo primero.', true); return; }
   if (!(shortP > 0) || !(longP > 0)) { setStatus('Los períodos deben ser números positivos.', true); return; }
   if (shortP >= longP) { setStatus('La SMA corta debe ser menor que la SMA larga.', true); return; }
 
   runBtn.disabled = true;
   setStatus('Descargando datos de mercado…');
   try {
-    const { dates, closes } = await fetchPrices(coinId, days);
+    const { dates, closes } = assetType === 'crypto'
+      ? await fetchPrices(assetId, days)
+      : await fetchPricesTwelveData(assetId, days);
     if (closes.length < longP + 5) {
-      setStatus(`Datos insuficientes (${closes.length} días) para una SMA de ${longP}. Elige un rango mayor o períodos más cortos.`, true);
+      setStatus(`Datos insuficientes (${closes.length} velas) para una SMA de ${longP}. Elige un rango mayor o períodos más cortos.`, true);
       return;
     }
     setStatus('Corriendo backtest…');
     const result = backtest(dates, closes, shortP, longP);
-    lastResult = { dates, closes, shortP, longP, symbol, ...result };
+    lastResult = { dates, closes, shortP, longP, symbol, barsPerYear, ...result };
     resetManualSim();
     renderAll(lastResult);
-    setStatus(`Listo — ${closes.length} días de datos de ${symbol}, del ${dates[0]} al ${dates[dates.length - 1]}.`);
+    setStatus(`Listo — ${closes.length} velas de ${symbol}, del ${dates[0]} al ${dates[dates.length - 1]}.`);
   } catch (err) {
     console.error(err);
-    setStatus('Error al descargar datos (posible límite de la API pública). Intenta de nuevo en unos segundos.', true);
+    setStatus('Error al descargar datos (posible límite de la API o símbolo no disponible en el tier gratuito). Intenta de nuevo en unos segundos.', true);
   } finally {
     runBtn.disabled = false;
   }
@@ -811,4 +890,8 @@ simClearBtn.addEventListener('click', () => {
   if (lastResult) updatePEComparator(lastResult);
 }));
 
-loadAssetOptions().finally(runBacktestFlow);
+assetTypeSelect.addEventListener('change', () => {
+  refreshAssetOptions(assetTypeSelect.value).finally(runBacktestFlow);
+});
+
+refreshAssetOptions(assetTypeSelect.value).finally(runBacktestFlow);

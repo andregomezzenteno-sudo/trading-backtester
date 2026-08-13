@@ -1,15 +1,22 @@
 # Trading Strategy Backtester
 
 A small, real, publicly-runnable backtester for a moving-average-crossover trading
-strategy, built on real historical market data. No backend, no API keys, no build
-step — open `index.html` and it runs.
+strategy, built on real historical market data across crypto, stocks, indices, and
+commodities. No backend, no build step — open `index.html` and it runs.
 
 **[Live demo →](https://andregomezzenteno-sudo.github.io/trading-backtester/)**
 
 ## What it does
 
-1. Pick an asset — the top ~150 cryptocurrencies by market cap, loaded live from
-   CoinGecko — and a historical range (up to the 365 days the free API allows).
+1. Pick an asset type (crypto, stocks, indices, commodities) and an asset:
+   - **Crypto** — the top ~150 coins by market cap, loaded live from CoinGecko.
+   - **Stocks** — a curated list of ~25 well-known large caps.
+   - **Indices / commodities** — served via well-known ETF proxies (e.g. S&P 500
+     via `SPY`, gold via `GLD`), labeled as such — direct index/futures symbols
+     require a paid data-provider plan, so this is the honest free-tier option,
+     not a hidden substitution.
+   Then a historical range (up to the free-tier max — 365 calendar days for crypto,
+   365 trading days for everything else).
 2. Set the short and long SMA periods for a classic **moving-average crossover**
    strategy: go long when the short SMA crosses above the long SMA, exit when it
    crosses back below.
@@ -36,11 +43,17 @@ step — open `index.html` and it runs.
 - **No lookahead bias.** A crossover is only detectable once a full day's close is
   known, so a signal computed from day *i*'s data is executed at day *i+1*'s close —
   never the same bar that produced it. See `backtest()` in [app.js](app.js).
-- **Sharpe ratio** is annualized with `√365`, not the usual `√252`, since crypto
-  markets trade every day of the year.
-- **Data limitation, stated up front:** CoinGecko's free public API caps historical
-  daily data at 365 days. The UI says so — the tool doesn't pretend to have more
-  history than it does.
+- **Sharpe ratio, and every other annualized figure, uses the right trading
+  calendar for the asset:** `√365` for crypto (trades every calendar day) vs.
+  `√252` for stocks/indices/commodities (business days only) — including inside
+  the evergreen comparator, where a "quarter" and a "month" are derived from that
+  same bars-per-year figure rather than hardcoded as calendar days. See
+  `barsPerYear` threaded through `computeMetrics()` and `computeEvergreenSeries()`
+  in [app.js](app.js).
+- **Data limitation, stated up front:** both free-tier APIs cap how much history
+  they'll return (CoinGecko: 365 calendar days for crypto; Twelve Data: rate- and
+  plan-gated for stocks/indices/commodities). The UI says so — the tool doesn't
+  pretend to have more history than it does.
 - **This is a research/education tool, not investment advice** and doesn't execute
   real trades. Most simple crossover strategies underperform buy-and-hold most of
   the time — that's an expected, honest result, not a bug.
@@ -66,12 +79,22 @@ Everything runs in the browser:
 - `index.html` / `style.css` — layout and design system (light/dark aware)
 - `app.js` — data fetching, the backtest engine, and hand-rolled SVG chart
   rendering (no charting library dependency)
-- Market data: [CoinGecko public API](https://www.coingecko.com/en/api), called
-  directly from the client — CORS-enabled, no API key, no server to host or pay for
+- Market data: [CoinGecko public API](https://www.coingecko.com/en/api) for
+  crypto (no key needed) and [Twelve Data](https://twelvedata.com/) for
+  stocks/indices/commodities, both called directly from the client (CORS-enabled).
 
 This means the whole thing deploys as static files (GitHub Pages, Vercel,
-Cloudflare Pages, ...) with zero ongoing infrastructure cost, and each visitor's
-own browser does the computation.
+Cloudflare Pages, ...) with no server to host or pay for — each visitor's own
+browser does the computation and the data fetching.
+
+**On the embedded Twelve Data key:** it's a free-tier key, intentionally public.
+Client-side-only architecture means any API key used here is necessarily visible
+in the shipped code — there's no backend to hide it behind. It's rate-limited
+(8 req/min, 800/day) with no paid tier attached, so the worst case if it's ever
+reused elsewhere or the quota is exhausted is that stock/index/commodity backtests
+stop responding until the quota resets; crypto is unaffected since it doesn't use
+this key at all. If you fork this, get your own free key at twelvedata.com and
+swap `TWELVE_DATA_API_KEY` in [app.js](app.js).
 
 ## Running locally
 
