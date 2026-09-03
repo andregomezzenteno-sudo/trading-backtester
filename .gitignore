@@ -1,3 +1,6 @@
 .DS_Store
 Thumbs.db
 *.log
+
+# Estado local de wrangler (cache, credenciales de cuenta) — nunca al repo.
+worker/.wrangler/

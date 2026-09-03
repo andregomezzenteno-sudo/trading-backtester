@@ -1,0 +1,7 @@
+name = "trading-backtester-data-proxy"
+main = "src/index.js"
+compatibility_date = "2024-11-01"
+
+# La clave NO va aquí. Se guarda como secreto con:
+#   wrangler secret put TWELVE_DATA_API_KEY
+# Así no aparece ni en el repositorio ni en este fichero.

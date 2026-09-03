@@ -1,0 +1,10 @@
+{
+  "name": "trading-backtester",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Backtester de estrategias de trading sobre datos históricos reales, 100% cliente, con simulador de apalancamiento y comparador de estructura evergreen/private equity.",
+  "scripts": {
+    "test": "node tests/engine.test.mjs"
+  },
+  "engines": { "node": ">=20" }
+}

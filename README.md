@@ -74,27 +74,63 @@ commodities. No backend, no build step — open `index.html` and it runs.
 
 ## Architecture
 
-Everything runs in the browser:
+Almost everything runs in the browser:
 
 - `index.html` / `style.css` — layout and design system (light/dark aware)
-- `app.js` — data fetching, the backtest engine, and hand-rolled SVG chart
-  rendering (no charting library dependency)
+- `engine.js` — the pure calculation core: SMA/crossover backtest, metrics
+  (Sharpe, max drawdown, win rate), the leveraged manual-trade simulator with
+  isolated-margin liquidation, and the evergreen/private-equity comparator.
+  Touches no DOM, so the test suite imports it directly and runs the exact
+  code that ships — not a copy that can drift out of sync.
+- `config.js` — deployment configuration (the data-proxy URL); no secrets.
+- `app.js` — data fetching, DOM wiring, and hand-rolled SVG chart rendering
+  (no charting library dependency).
 - Market data: [CoinGecko public API](https://www.coingecko.com/en/api) for
-  crypto (no key needed) and [Twelve Data](https://twelvedata.com/) for
-  stocks/indices/commodities, both called directly from the client (CORS-enabled).
+  crypto (no key needed, called directly from the client) and
+  [Twelve Data](https://twelvedata.com/) for stocks/indices/commodities,
+  proxied through a small Cloudflare Worker (see below).
 
 This means the whole thing deploys as static files (GitHub Pages, Vercel,
-Cloudflare Pages, ...) with no server to host or pay for — each visitor's own
-browser does the computation and the data fetching.
+Cloudflare Pages, ...) plus one small serverless function — no server to run
+continuously, no infrastructure to pay for.
 
-**On the embedded Twelve Data key:** it's a free-tier key, intentionally public.
-Client-side-only architecture means any API key used here is necessarily visible
-in the shipped code — there's no backend to hide it behind. It's rate-limited
-(8 req/min, 800/day) with no paid tier attached, so the worst case if it's ever
-reused elsewhere or the quota is exhausted is that stock/index/commodity backtests
-stop responding until the quota resets; crypto is unaffected since it doesn't use
-this key at all. If you fork this, get your own free key at twelvedata.com and
-swap `TWELVE_DATA_API_KEY` in [app.js](app.js).
+### Keeping the API key server-side
+
+Earlier versions of this project embedded the Twelve Data key directly in
+`app.js`, reasoning that a free-tier, rate-limited key carries no real risk
+even if public. That's true as far as it goes, but a credential sitting in a
+public repository's source is a bad signal regardless of its actual blast
+radius — and whoever spots it may never read the justification.
+
+The sibling project, [PathFolio](https://github.com/andregomezzenteno-sudo/pathfolio),
+established the fix: a small Cloudflare Worker (`worker/`) holds the key as a
+server-side secret and proxies requests on the app's behalf, enforcing:
+
+- a symbol allowlist (only the 35 tickers this app actually offers),
+- an origin allowlist (only this site and localhost),
+- a request-size cap, and
+- a 6-hour edge cache (cuts real usage against an 8-req/min free-tier quota).
+
+CoinGecko isn't proxied — it's a public, keyless API, so routing it through
+the Worker would add a network hop for no security benefit.
+
+To run your own instance: get a free key at twelvedata.com, deploy the Worker
+(see [worker/README.md](worker/README.md)), and point `dataProxyUrl` in
+[`config.js`](config.js) at it.
+
+## Tests
+
+```bash
+npm test
+```
+
+Runs `tests/engine.test.mjs` against `engine.js` directly — no DOM, no
+mocking, the same functions the browser calls. Covers the SMA/crossover
+timing (a signal detected on day *i* is only ever acted on at day *i+1*'s
+close), the leveraged-trade liquidation threshold and earliest-touch
+detection, the evergreen comparator's appraisal-smoothing math, and the
+lock-up/liquidity-window exit calculation — including the edge cases (zero
+leverage, zero variance, no trades, exits beyond the available data).
 
 ## Running locally
 
